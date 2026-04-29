@@ -12,7 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # Модель (используем ту, что точно работает)
-MODEL_NAME = 'gemini-1.5-flash' 
+MODEL_NAME = 'models/gemini-1.5-flash' 
 
 BOT_NAME = "Балалай Матрешкин"
 
