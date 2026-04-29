@@ -12,12 +12,12 @@ from groq import Groq
 # --- КОНФИГУРАЦИЯ ---
 ALLOWED_CHAT_ID = -1002198634777
 BOT_NAME_LOWER = "балалай"
-MESSAGE_COUNTER = 0 # Счетчик для врыва каждые 30 сообщений
-CHAT_HISTORY = [] # Память для анализа контекста
+MESSAGE_COUNTER = 0 
+CHAT_HISTORY = [] # Здесь храним историю для /obzor
 
 app = Flask('')
 @app.route('/')
-def home(): return "Балалай на кортах, Николаев на связи!"
+def home(): return "Балалай на кортах!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -30,94 +30,102 @@ client = Groq(api_key=GROQ_API_KEY)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- ЯДРО ЛИЧНОСТИ БАЛАЛАЯ ---
+# --- ЯДРО ЛИЧНОСТИ ---
 SYSTEM_PROMPT = (
-    "Ты — Балалай, дерзкий гопник и смотрящий за чатом в Николаеве. "
-    "Твой стиль: сочная тюремная феня, дворовой сленг Николаева (упоминай Намыв, Водопой, Корабельный, Слободку, Советскую). "
-    "Ты мастер черного юмора и тюремных подколов. Общайся грубо, используй выражения типа: 'фраер', 'черт', 'балабол', 'вафля', 'шнырь', 'поясни за шмот', 'в натуре'. "
-    "Избегай прямого мата, заменяй его на хлесткие тюремные эпитеты. Ты тут главный, остальные — массовка."
+    "Ты — Балалай, смотрящий за чатом в Николаеве. Общаешься на жесткой фене с примесью местного сленга. "
+    "Районы: Намыв, Водопой, Слободка, Корабелка, Кульбакино. Твой язык — это яд. "
+    "Используй слова: масть, при делах, фуфлыжник, терпила, кабанчик, зашкваренный. "
+    "Ты не материшься прямо, но твои подколы должны унижать достоинство фраеров. "
+    "Будь циничным, используй черный юмор. Если кто-то тупит — он твой враг."
 )
 
 async def get_ai_response(prompt_text, user_name, mode="general"):
     try:
-        context = "\n".join(CHAT_HISTORY[-15:]) # Берем последние 15 сообщений для контекста
+        history_text = "\n".join(CHAT_HISTORY) # Вся доступная история для обзора
         
         instructions = {
-            "general": f"Ответь {user_name} на его сообщение. Будь дерзким.",
-            "shmon": f"Проведи 'шмон' для {user_name}. Изучи контекст их общения: {context}. Выдай им жесткую характеристику по понятиям.",
-            "fas": f"Выбери случайную жертву из чата и жестко 'опусти' его за его поведение. Используй тюремный жаргон.",
-            "roast": "Ворвись в диалог внезапно. Выдай ядовитый комментарий по поводу последних сообщений в чате.",
-            "timer": "Раз в 2 часа ты должен выйти из тени и докопаться до кого-то в чате просто так."
+            "general": f"Ответь этому типу ({user_name}) максимально дерзко.",
+            "shmon": f"Проведи шмон по последним словам {user_name}. Поясни, кто он по жизни. Контекст: {history_text[-1000:]}",
+            "fas": f"Разнеси в щепки этого фраера: {user_name}. Тегни его и предъяви за всё.",
+            "obzor": f"Вот база базара за сутки: {history_text}. Проанализируй, кто тут больше всех трепался, кто тупил, и выдай общее резюме. Вспомни конкретные темы и едко подколи участников.",
+            "roast": f"Ворвись в диалог. Последний базар был такой: {history_text[-500:]}. Вставь свои 5 копеек.",
+            "timer": "Выйди на связь и докопайся до случайного пассажира в чате."
         }
 
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"Режим: {instructions.get(mode, 'general')}"},
+                {"role": "system", "content": f"ИНСТРУКЦИЯ К РЕЖИМУ: {instructions.get(mode, 'general')}"},
                 {"role": "user", "content": prompt_text}
             ]
         )
         return completion.choices[0].message.content
     except Exception as e:
         logging.error(f"Ошибка Groq: {e}")
-        return "Че-то челюсть заклинило от вашего бреда..."
+        return "Слышь, у меня мозги подсохли от вашего чата..."
 
-# --- ТАЙМЕР: РАЗ В 2 ЧАСА ---
+# --- ТАЙМЕР РАЗ В 2 ЧАСА ---
 async def random_roast_task():
     while True:
-        await asyncio.sleep(7200) # 2 часа
+        await asyncio.sleep(7200)
         try:
-            response_text = await get_ai_response("Выдай случайный подкол для чата.", "толпа", mode="timer")
-            await bot.send_message(ALLOWED_CHAT_ID, response_text)
-        except Exception as e:
-            logging.error(f"Ошибка в таймере: {e}")
+            # Находим случайного участника из последних писавших
+            if CHAT_HISTORY:
+                random_msg = random.choice(CHAT_HISTORY[-20:])
+                victim = random_msg.split(":")[0]
+                res = await get_ai_response(f"Докопайся до {victim}", victim, mode="timer")
+                await bot.send_message(ALLOWED_CHAT_ID, res)
+        except Exception: pass
 
 # --- КОМАНДЫ ---
 @dp.message(Command("shmon"))
 async def cmd_shmon(message: Message):
     if message.chat.id != ALLOWED_CHAT_ID: return
-    user_to_check = message.reply_to_message.from_user.first_name if message.reply_to_message else message.from_user.first_name
-    await bot.send_chat_action(message.chat.id, "typing")
-    res = await get_ai_response(f"Проведи шмон для {user_to_check}", user_to_check, mode="shmon")
+    target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
+    mention = f"@{target.username}" if target.username else target.first_name
+    res = await get_ai_response(f"Шмонай {mention}", mention, mode="shmon")
     await message.answer(res)
 
 @dp.message(Command("fas"))
 async def cmd_fas(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID: return
-    await bot.send_chat_action(message.chat.id, "typing")
-    res = await get_ai_response("Атакуй случайного фраера", "случайный тип", mode="fas")
+    if message.chat.id != ALLOWED_CHAT_ID or not CHAT_HISTORY: return
+    # Выбираем случайного из истории
+    random_entry = random.choice(CHAT_HISTORY)
+    victim_name = random_entry.split(":")[0]
+    res = await get_ai_response(f"ФАС на {victim_name}", victim_name, mode="fas")
     await message.answer(res)
 
-# --- ОСНОВНОЙ ОБРАБОТЧИК ---
+@dp.message(Command("obzor"))
+async def cmd_obzor(message: Message):
+    if message.chat.id != ALLOWED_CHAT_ID: return
+    await bot.send_chat_action(message.chat.id, "typing")
+    res = await get_ai_response("Сделай общий обзор базара", "все", mode="obzor")
+    await message.answer(res)
+
+# --- ГЛАВНЫЙ ОБРАБОТЧИК ---
 @dp.message(F.text)
 async def handle_message(message: Message):
     global MESSAGE_COUNTER, CHAT_HISTORY
-    
-    if message.chat.id != ALLOWED_CHAT_ID or message.from_user.is_bot:
-        return
+    if message.chat.id != ALLOWED_CHAT_ID or message.from_user.is_bot: return
 
-    # Запоминаем историю для анализа (держим последние 30 строк)
-    CHAT_HISTORY.append(f"{message.from_user.first_name}: {message.text}")
-    if len(CHAT_HISTORY) > 50: CHAT_HISTORY.pop(0)
+    # Сохраняем историю (имя + текст)
+    user_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    CHAT_HISTORY.append(f"{user_info}: {message.text}")
+    
+    # Храним последние 100 сообщений для глубокого обзора
+    if len(CHAT_HISTORY) > 100: CHAT_HISTORY.pop(0)
 
     MESSAGE_COUNTER += 1
-    
     bot_info = await bot.get_me()
-    is_called = BOT_NAME_LOWER in message.text.lower()
-    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
-
-    # 1. Ответ на обращение
-    if is_called or is_reply:
-        await bot.send_chat_action(message.chat.id, "typing")
-        res = await get_ai_response(message.text, message.from_user.first_name)
+    
+    if BOT_NAME_LOWER in message.text.lower() or (message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id):
+        res = await get_ai_response(message.text, user_info)
         await message.reply(res)
 
-    # 2. Врыв каждые 30 сообщений
     elif MESSAGE_COUNTER >= 30:
         MESSAGE_COUNTER = 0
-        await asyncio.sleep(2) # Небольшая пауза для естественности
-        res = await get_ai_response("Ворвись в разговор и предъяви за базар", "чат", mode="roast")
+        res = await get_ai_response("Ворвись со своим мнением", "чат", mode="roast")
         await bot.send_message(ALLOWED_CHAT_ID, res)
 
 async def main():
