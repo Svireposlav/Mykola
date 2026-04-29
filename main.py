@@ -3,44 +3,45 @@ import asyncio
 import logging
 from threading import Thread
 from flask import Flask
-import google.generativeai as genai
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
+from groq import Groq
 
-# ================= МИНИ-СЕРВЕР =================
+# Мини-сервер для Render
 app = Flask('')
 @app.route('/')
-def home(): return "Бот живой!"
+def home(): return "Бот на Groq живой!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# ================= НАСТРОЙКИ =================
+# Настройки
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# Настраиваем ИИ старым надежным способом
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
-
-logging.basicConfig(level=logging.INFO)
+client = Groq(api_key=GROQ_API_KEY)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= ЛОГИКА =================
 async def get_ai_response(user_text):
     try:
-        # Старый добрый метод генерации
-        response = model.generate_content(user_text)
-        return response.text
+        # Используем модель Llama 3 — она мощная и бесплатная
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "Ты — Балалай Матрешкин, веселый и ласковый собеседник. Обращайся к пользователю только 'господин'."},
+                {"role": "user", "content": user_text}
+            ]
+        )
+        return completion.choices[0].message.content
     except Exception as e:
-        return f"Господин, даже старый метод выдает ошибку: {str(e)}"
+        return f"Господин, даже Groq приуныл: {str(e)}"
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer("Привет! Я Балалай. Попытка №1000, поехали!")
+    await message.answer("Господин! Я перешел на новый двигатель Groq. Теперь полетаем!")
 
 @dp.message()
 async def handle_message(message: Message):
@@ -55,4 +56,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
