@@ -22,7 +22,7 @@ def run_web():
 # ================= НАСТРОЙКИ БОТА =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = 'gemini-1.5-flash'  # Самая стабильная модель
+MODEL_NAME = 'models/gemini-1.5-flash'
 BOT_NAME = "Балалай Матрешкин"
 
 SYSTEM_INSTRUCTION = f"""
