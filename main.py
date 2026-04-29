@@ -1,19 +1,28 @@
 import os
 import asyncio
 import logging
+from threading import Thread
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.types import Message
-from google import genai  # <-- НОВАЯ БИБЛИОТЕКА
+from google import genai
 
-# ================= НАСТРОЙКИ =================
-# Ключи берутся из переменных окружения Render
+# ================= МИНИ-СЕРВЕР ДЛЯ RENDER =================
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Господин, я жив и работаю!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# ================= НАСТРОЙКИ БОТА =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-# Модель (используем ту, что точно работает)
-MODEL_NAME = 'models/gemini-flash-latest' 
-
+MODEL_NAME = 'gemini-1.5-flash'  # Сменил на 1.5 для стабильности лимитов
 BOT_NAME = "Балалай Матрешкин"
 
 SYSTEM_INSTRUCTION = f"""
@@ -30,44 +39,40 @@ if not BOT_TOKEN or not GEMINI_API_KEY:
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# Инициализация клиента НОВОЙ библиотеки
 client = genai.Client(api_key=GEMINI_API_KEY)
-
 chat_sessions = {}
 
+# ================= ЛОГИКА ИИ =================
 async def get_ai_response(user_text, user_id):
     if user_id not in chat_sessions:
         chat_sessions[user_id] = []
     
-    # Формируем историю с системной инструкцией
-    history = [{"role": "system", "parts": [{"text": SYSTEM_INSTRUCTION}]}]
+    history = [{"role": "user", "parts": [{"text": f"ИНСТРУКЦИЯ: {SYSTEM_INSTRUCTION}"}]}]
     history.extend(chat_sessions[user_id])
     history.append({"role": "user", "parts": [{"text": user_text}]})
     
     try:
-        # Вызов модели через новый SDK
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=history
         )
         
         answer = response.text
-        
-        # Сохраняем диалог
         chat_sessions[user_id].append({"role": "user", "parts": [{"text": user_text}]})
         chat_sessions[user_id].append({"role": "model", "parts": [{"text": answer}]})
         
-        # Очистка старой истории (оставляем последние 20 сообщений)
-        if len(chat_sessions[user_id]) > 20:
-            chat_sessions[user_id] = chat_sessions[user_id][-20:]
+        if len(chat_sessions[user_id]) > 10:
+            chat_sessions[user_id] = chat_sessions[user_id][-10:]
             
         return answer
         
     except Exception as e:
         logging.error(f"Ошибка ИИ: {e}")
+        if "429" in str(e):
+            return "Ой, господин, я так много болтал, что у меня пересохло в горле. Дай мне минуту отдохнуть! ☕"
         return "Ой, я немного задумался... Попробуй еще раз!"
 
+# ================= ОБРАБОТЧИКИ =================
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(f"Привет! 👋 Я {BOT_NAME}. Готов болтать и шутить!")
@@ -77,15 +82,28 @@ async def handle_message(message: Message):
     if message.from_user.is_bot:
         return
     
-    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    user_name = message.from_user.first_name
-    prompt = f"{user_name}: {message.text}"
-    
-    response_text = await get_ai_response(prompt, message.from_user.id)
-    await message.answer(response_text)
+    try:
+        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        user_name = message.from_user.first_name
+        prompt = f"{user_name}: {message.text}"
+        response_text = await get_ai_response(prompt, message.from_user.id)
+        await message.answer(response_text)
+    except Exception as e:
+        logging.error(f"Ошибка в handle_message: {e}")
 
+# ================= ЗАПУСК =================
 async def main():
-    print(f"Бот {BOT_NAME} запущен с моделью {MODEL_NAME}...")
+    # 1. Запускаем веб-сервер в отдельном потоке
+    server_thread = Thread(target=run_web)
+    server_thread.daemon = True
+    server_thread.start()
+    
+    print(f"Бот {BOT_NAME} запущен...")
+    
+    # 2. Удаляем вебхуки и старые сообщения перед стартом
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # 3. Запускаем опрос
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
