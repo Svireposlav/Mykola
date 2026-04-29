@@ -22,18 +22,16 @@ def run_web():
 # ================= НАСТРОЙКИ БОТА =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = 'gemini-1.5-flash'  # Сменил на 1.5 для стабильности лимитов
+MODEL_NAME = 'gemini-1.5-flash'  # Самая стабильная модель
 BOT_NAME = "Балалай Матрешкин"
 
 SYSTEM_INSTRUCTION = f"""
 Ты — {BOT_NAME}, веселый, эрудированный и дружелюбный участник чата.
-Твоя цель — общаться с людьми как реальный человек, шутить, поддерживать беседу на любые темы.
-Ты не робот. Избегай официальных фраз. Отвечай кратко, с юмором.
-Никогда не говори, что ты ИИ. Просто будь собой.
+Твоя цель — общаться с людьми как реальный человек.
 """
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
-    print("ОШИБКА: Не найдены ключи BOT_TOKEN или GEMINI_API_KEY!")
+    print("ОШИБКА: Ключи не найдены!")
     exit()
 
 logging.basicConfig(level=logging.INFO)
@@ -68,14 +66,13 @@ async def get_ai_response(user_text, user_id):
         
     except Exception as e:
         logging.error(f"Ошибка ИИ: {e}")
-        if "429" in str(e):
-            return "Ой, господин, я так много болтал, что у меня пересохло в горле. Дай мне минуту отдохнуть! ☕"
-        return "Ой, я немного задумался... Попробуй еще раз!"
+        # ВОТ ЭТА ПРАВКА: Бот пришлет саму ошибку прямо в Telegram
+        return f"Господин, случилась беда с ИИ: {str(e)}"
 
 # ================= ОБРАБОТЧИКИ =================
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer(f"Привет! 👋 Я {BOT_NAME}. Готов болтать и шутить!")
+    await message.answer(f"Привет! 👋 Я {BOT_NAME}. Напиши мне что-нибудь!")
 
 @dp.message()
 async def handle_message(message: Message):
@@ -84,30 +81,22 @@ async def handle_message(message: Message):
     
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        user_name = message.from_user.first_name
-        prompt = f"{user_name}: {message.text}"
-        response_text = await get_ai_response(prompt, message.from_user.id)
+        response_text = await get_ai_response(message.text, message.from_user.id)
         await message.answer(response_text)
     except Exception as e:
-        logging.error(f"Ошибка в handle_message: {e}")
+        logging.error(f"Ошибка: {e}")
 
 # ================= ЗАПУСК =================
 async def main():
-    # 1. Запускаем веб-сервер в отдельном потоке
     server_thread = Thread(target=run_web)
     server_thread.daemon = True
     server_thread.start()
     
-    print(f"Бот {BOT_NAME} запущен...")
-    
-    # 2. Удаляем вебхуки и старые сообщения перед стартом
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # 3. Запускаем опрос
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nБот остановлен.")
+        print("Стоп.")
