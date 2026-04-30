@@ -17,7 +17,7 @@ CHAT_HISTORY = []
 
 app = Flask('')
 @app.route('/')
-def home(): return "Балалай на базе, Николаев в курсе!"
+def home(): return "Балалай в здании!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -36,32 +36,35 @@ def get_mention(user_dict):
         return f"@{user_dict['username']}"
     return f"[{user_dict['name']}](tg://user?id={user_dict['id']})"
 
-# --- ЯДРО ЛИЧНОСТИ ---
+# --- ЯДРО ЛИЧНОСТИ (БЕЗ РАЙОНОВ) ---
 SYSTEM_PROMPT = (
-    "Ты — Балалай, дерзкий и авторитетный тип из Николаева. Твой стиль — сочная тюремная феня и черный юмор. "
-    "Ты общаешься жестко, цинично, ставя фраеров на место. "
-    "ВАЖНО: Упоминай районы Николаева (Намыв, Слободка, Корабелка и др.) ОЧЕНЬ РЕДКО. Не спамь ими. "
-    "Используй только имена/теги реальных людей из предоставленного списка. Не выдумывай персонажей. "
-    "Ты не материшься прямо, но унижаешь словом так, что оппоненту хочется выйти из чата."
+    "Ты — Балалай, дерзкий и авторитетный смотрящий за чатом. Твой стиль — жесткая тюремная феня, цинизм и острый черный юмор. "
+    "Ты общаешься свысока, ставя фраеров на место. Твоя задача — хлестко подкалывать РЕАЛЬНЫХ участников чата. "
+    "Используй только те имена и юзернеймы, которые есть в предоставленном списке участников. "
+    "Ты не материшься прямо, но унижаешь словом так, что оппоненту хочется выйти из чата. "
+    "Никаких упоминаний конкретных районов городов. Просто дворовой и тюремный сленг."
 )
 
 async def get_ai_response(prompt_text, mode="general"):
     try:
+        # Собираем список уникальных живых душ в чате
         unique_users = {m['id']: m for m in CHAT_HISTORY}.values()
         users_info = "\n".join([f"- {u['name']} (ID: {u['id']}, @{u['username'] or 'нет'})" for u in unique_users])
         history_str = "\n".join([f"{m['name']}: {m['text']}" for m in CHAT_HISTORY[-100:]])
+        
+        # Список имен для выбора цели
+        names_list = ", ".join([u['name'] for u in unique_users])
 
         instructions = {
-            "general": "Ответь этому типу максимально едко, используя контекст.",
-            "shmon": "Поясни за этого персонажа, основываясь на его базаре. Кто он по масти?",
-            "fas": "Выбери одного из списка участников, тегни его и устрой ему лютый разнос.",
+            "general": "Ответь этому фраеру максимально едко по контексту последнего сообщения.",
+            "shmon": "Поясни за этого персонажа. Кто он по жизни, судя по его базару?",
+            "fas": f"Выбери ОДНОГО случайного человека из списка: [{names_list}]. Тегни его и устрой ему лютый разнос с предъявами.",
             "obzor": (
-                "Проанализируй базар. Выбери от 2 до 5 самых активных. "
-                "ОБЯЗАТЕЛЬНО упомяни их имена в тексте. Выдай ядовитое резюме их общения. "
-                "Районы Николаева упоминай не чаще одного раза за весь текст."
+                f"Проанализируй базар этих людей: [{names_list}]. Выбери от 2 до 5 самых активных. "
+                "ОБЯЗАТЕЛЬНО упомяни их имена в тексте. Выдай ядовитое резюме их общения за последнее время."
             ),
-            "roast": "Ворвись в диалог и раскидай всех по фактам. Используй реальные имена.",
-            "timer": "Случайный наезд на кого-то из списка участников."
+            "roast": "Ворвись в диалог и раскидай всех по фактам. Используй реальные имена из истории.",
+            "timer": f"Случайный наезд на кого-то из списка: [{names_list}]."
         }
 
         completion = client.chat.completions.create(
@@ -69,23 +72,27 @@ async def get_ai_response(prompt_text, mode="general"):
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "system", "content": f"РЕАЛЬНЫЕ УЧАСТНИКИ:\n{users_info}"},
-                {"role": "system", "content": f"ПОСЛЕДНИЕ СООБЩЕНИЯ:\n{history_str}"},
+                {"role": "system", "content": f"ИСТОРИЯ БАЗАРА:\n{history_str}"},
                 {"role": "system", "content": f"РЕЖИМ: {instructions.get(mode, 'general')}"},
                 {"role": "user", "content": prompt_text}
             ]
         )
         
         response = completion.choices[0].message.content
+        
+        # Превращаем имена в кликабельные теги/ссылки
         for u in unique_users:
             if u['name'] in response:
                 mention = get_mention(u)
                 response = response.replace(u['name'], mention)
+        
         return response
     except Exception as e:
         logging.error(f"Ошибка Groq: {e}")
         return "Че-то челюсть свело, не могу ответить..."
 
-# --- КОМАНДЫ ---
+# --- ОБРАБОТЧИК КОМАНД ---
+
 @dp.message(Command("shmon"))
 async def cmd_shmon(message: Message):
     if message.chat.id != ALLOWED_CHAT_ID: return
@@ -95,9 +102,10 @@ async def cmd_shmon(message: Message):
 
 @dp.message(Command("fas"))
 async def cmd_fas(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID or not CHAT_HISTORY: return
+    if message.chat.id != ALLOWED_CHAT_ID or not CHAT_HISTORY: 
+        return
     await bot.send_chat_action(message.chat.id, "typing")
-    res = await get_ai_response("Выбери цель из списка и атакуй!", mode="fas")
+    res = await get_ai_response("Выбери одного фраера и атакуй!", mode="fas")
     await message.answer(res, parse_mode="Markdown")
 
 @dp.message(Command("obzor"))
@@ -110,11 +118,13 @@ async def cmd_obzor(message: Message):
     res = await get_ai_response("Сделай обзор с упоминанием 2-5 человек", mode="obzor")
     await message.answer(res, parse_mode="Markdown")
 
-# --- ОБРАБОТЧИК ---
+# --- ОСНОВНОЙ ОБРАБОТЧИК ---
 @dp.message(F.text)
 async def handle_message(message: Message):
     global MESSAGE_COUNTER, CHAT_HISTORY
     if message.chat.id != ALLOWED_CHAT_ID or message.from_user.is_bot: return
+
+    # Сохраняем информацию о юзере
     CHAT_HISTORY.append({
         "id": message.from_user.id,
         "name": message.from_user.first_name,
@@ -122,14 +132,18 @@ async def handle_message(message: Message):
         "text": message.text
     })
     if len(CHAT_HISTORY) > 200: CHAT_HISTORY.pop(0)
+
     MESSAGE_COUNTER += 1
     bot_info = await bot.get_me()
+    
     is_called = BOT_NAME_LOWER in message.text.lower()
     is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
+
     if is_called or is_reply:
         await bot.send_chat_action(message.chat.id, "typing")
         res = await get_ai_response(message.text)
         await message.reply(res, parse_mode="Markdown")
+
     elif MESSAGE_COUNTER >= 30:
         MESSAGE_COUNTER = 0
         res = await get_ai_response("Ворвись в базар", mode="roast")
