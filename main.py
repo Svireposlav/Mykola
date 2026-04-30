@@ -17,7 +17,7 @@ CHAT_HISTORY = []
 
 app = Flask('')
 @app.route('/')
-def home(): return "Балалай на кортах!"
+def home(): return "Балалай на базе, Николаев в курсе!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -30,46 +30,64 @@ client = Groq(api_key=GROQ_API_KEY)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- ЯДРО ЛИЧНОСТИ (НИКОЛАЕВ + ФЕНЯ) ---
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ТЕГОВ ---
+def get_mention(user_dict):
+    if user_dict.get("username"):
+        return f"@{user_dict['username']}"
+    return f"[{user_dict['name']}](tg://user?id={user_dict['id']})"
+
+# --- ЯДРО ЛИЧНОСТИ ---
 SYSTEM_PROMPT = (
-    "Ты — Балалай, дерзкий смотрящий за чатом в Николаеве. Твой дом — Намыв и Водопой. "
-    "Ты общаешься на жесткой фене, используешь черный юмор и тюремные приколы. "
-    "Твоя задача — ставить фраеров на место. К участникам обращайся едко, используй их теги или имена. "
-    "Районы Николаева для колорита: Корабелка, Слободка, Промзона, Советская. "
-    "Не матерись в лоб, но гни свою линию так, чтоб им было стыдно за свой базар."
+    "Ты — Балалай, дерзкий и авторитетный тип из Николаева. Твой стиль — сочная тюремная феня и черный юмор. "
+    "Ты общаешься жестко, цинично, ставя фраеров на место. "
+    "ВАЖНО: Упоминай районы Николаева (Намыв, Слободка, Корабелка и др.) ОЧЕНЬ РЕДКО, только если это реально в тему. Не спамь ими. "
+    "Используй только имена/теги реальных людей из предоставленного списка. Не выдумывай персонажей. "
+    "Ты не материшься прямо, но унижаешь словом так, что оппоненту хочется выйти из чата."
 )
 
 async def get_ai_response(prompt_text, mode="general"):
     try:
-        history_str = "\n".join(CHAT_HISTORY[-100:]) # Анализ последних 100 сообщений
-        
+        # Собираем уникальных участников
+        unique_users = {m['id']: m for m in CHAT_HISTORY}.values()
+        users_info = "\n".join([f"- {u['name']} (ID: {u['id']}, @{u['username'] or 'нет'})" for u in unique_users])
+        history_str = "\n".join([f"{m['name']}: {m['text']}" for m in CHAT_HISTORY[-100:]])
+
         instructions = {
-            "general": "Ответь дерзко и по понятиям на это сообщение.",
-            "shmon": "Проведи шмон этого фраера. Поясни за его базар в чате.",
-            "fas": "Выбери одну цель из истории чата, тегни её и жестко предъяви за поведение. Разнеси его!",
+            "general": "Ответь этому типу максимально едко, используя контекст.",
+            "shmon": "Поясни за этого персонажа, основываясь на его базаре. Кто он по масти?",
+            "fas": "Выбери одного из списка участников, тегни его и устрой ему лютый разнос.",
             "obzor": (
-                "Проанализируй историю чата. Выбери от 2 до 5 самых активных участников. "
-                "ОБЯЗАТЕЛЬНО упомяни их через @username (или по имени, если нет юзернейма) в одном сообщении. "
-                "Свяжи их в один сюжет: кто из них терпила, кто балабол, кто тут за главного пытается сойти. "
-                "Выдай едкое резюме их базара за сутки."
+                "Проанализируй базар. Выбери от 2 до 5 самых активных. "
+                "ОБЯЗАТЕЛЬНО упомяни их имена в тексте. Выдай ядовитое резюме их общения. "
+                "Районы Николаева упоминай только если это крайне уместно, не чаще одного раза за весь текст."
             ),
-            "roast": "Ворвись в текущий диалог и едко прокомментируй, о чем они трут.",
-            "timer": "Случайный наезд на случайного участника из истории."
+            "roast": "Ворвись в диалог и раскидай всех по фактам. Используй реальные имена.",
+            "timer": "Случайный наезд на кого-то из списка участников."
         }
 
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"КОНТЕКСТ ЧАТА:\n{history_str}"},
+                {"role": "system", "content": f"РЕАЛЬНЫЕ УЧАСТНИКИ:\n{users_info}"},
+                {"role": "system", "content": f"ПОСЛЕДНИЕ СООБЩЕНИЯ:\n{history_str}"},
                 {"role": "system", "content": f"РЕЖИМ: {instructions.get(mode, 'general')}"},
                 {"role": "user", "content": prompt_text}
             ]
         )
-        return completion.choices[0].message.content
+        
+        response = completion.choices[0].message.content
+        
+        # Автоматическая замена имен на кликабельные теги/ссылки
+        for u in unique_users:
+            if u['name'] in response:
+                mention = get_mention(u)
+                response = response.replace(u['name'], mention)
+        
+        return response
     except Exception as e:
         logging.error(f"Ошибка Groq: {e}")
-        return "Че-то масть не идет, не могу ответить..."
+        return "Че-то челюсть свело, не могу ответить..."
 
 # --- ОБРАБОТЧИК КОМАНД ---
 
@@ -77,71 +95,16 @@ async def get_ai_response(prompt_text, mode="general"):
 async def cmd_shmon(message: Message):
     if message.chat.id != ALLOWED_CHAT_ID: return
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
-    mention = f"@{target.username}" if target.username else target.first_name
-    res = await get_ai_response(f"Шмонай {mention}", mode="shmon")
-    await message.answer(res)
+    res = await get_ai_response(f"Проведи шмон для {target.first_name}", mode="shmon")
+    await message.answer(res, parse_mode="Markdown")
 
 @dp.message(Command("fas"))
 async def cmd_fas(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID: return
+    if message.chat.id != ALLOWED_CHAT_ID or not CHAT_HISTORY: return
     await bot.send_chat_action(message.chat.id, "typing")
-    res = await get_ai_response("Выбери цель и атакуй!", mode="fas")
-    await message.answer(res)
+    res = await get_ai_response("Выбери цель из списка и атакуй!", mode="fas")
+    await message.answer(res, parse_mode="Markdown")
 
 @dp.message(Command("obzor"))
 async def cmd_obzor(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID: return
-    await bot.send_chat_action(message.chat.id, "typing")
-    res = await get_ai_response("Сделай общий обзор с тегами 2-5 человек", mode="obzor")
-    await message.answer(res)
-
-# --- ОСНОВНОЙ ОБРАБОТЧИК ---
-@dp.message(F.text)
-async def handle_message(message: Message):
-    global MESSAGE_COUNTER, CHAT_HISTORY
-    
-    # Игнорим чужие чаты и ботов
-    if message.chat.id != ALLOWED_CHAT_ID or message.from_user.is_bot:
-        return
-
-    # Сохраняем сообщение в историю
-    user_tag = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
-    CHAT_HISTORY.append(f"{user_tag}: {message.text}")
-    if len(CHAT_HISTORY) > 150: CHAT_HISTORY.pop(0)
-
-    MESSAGE_COUNTER += 1
-    bot_info = await bot.get_me()
-    
-    # Ответ на обращение
-    is_called = BOT_NAME_LOWER in message.text.lower()
-    is_reply = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
-
-    if is_called or is_reply:
-        await bot.send_chat_action(message.chat.id, "typing")
-        res = await get_ai_response(message.text)
-        await message.reply(res)
-
-    # Врыв каждые 30 сообщений
-    elif MESSAGE_COUNTER >= 30:
-        MESSAGE_COUNTER = 0
-        res = await get_ai_response("Ворвись в диалог и раскидай по фактам", mode="roast")
-        await bot.send_message(ALLOWED_CHAT_ID, res)
-
-# --- ТАЙМЕР ---
-async def random_roast_task():
-    while True:
-        await asyncio.sleep(7200)
-        try:
-            res = await get_ai_response("Выдай случайный подкол для кого-то из чата", mode="timer")
-            await bot.send_message(ALLOWED_CHAT_ID, res)
-        except Exception: pass
-
-async def main():
-    Thread(target=run_web, daemon=True).start()
-    asyncio.create_task(random_roast_task())
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    if message.chat.id != ALLOWED_CHAT_ID or len(CHAT_HISTORY)
