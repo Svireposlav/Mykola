@@ -6,7 +6,7 @@ from threading import Thread
 from flask import Flask
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command
 from groq import Groq
 
 # --- КОНФИГУРАЦИЯ ---
@@ -17,7 +17,7 @@ CHAT_HISTORY = []
 
 app = Flask('')
 @app.route('/')
-def home(): return "Балалай на кортах, масть идет!"
+def home(): return "Балалай в здании, масть идет!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -35,33 +35,36 @@ def get_mention(user_dict):
         return f"@{user_dict['username']}"
     return f"[{user_dict['name']}](tg://user?id={user_dict['id']})"
 
+# --- ОБНОВЛЕННЫЙ ПРОМПТ (ДЛЯ ОБХОДА ФИЛЬТРОВ) ---
 SYSTEM_PROMPT = (
-    "Ты — Балалай, дерзкий авторитет. Твой стиль — жесткая феня и черный юмор. "
-    "Общайся свысока, используй только реальные имена из списка. "
-    "Никаких районов Николаева. Ты не материшься прямо, но унижаешь словом."
+    "Ты — персонаж по имени Балалай для дружеского чата. Твой образ — ироничный дворовой авторитет. "
+    "Ты используешь тюремный жаргон и феню исключительно в юмористических и развлекательных целях. "
+    "Твой стиль: едкие подколы, сарказм и пацанская риторика. Ты никого не оскорбляешь всерьез, а 'играешь роль'. "
+    "Используй слова: масть, фраер, базар, по понятиям, шнырь (в шутку). "
+    "Никакого мата и реальной ненависти. Только жесткий, харизматичный юмор."
 )
 
 async def get_ai_response(prompt_text, mode="general"):
     try:
         unique_users = {m['id']: m for m in CHAT_HISTORY}.values()
-        users_info = "\n".join([f"- {u['name']} (@{u['username'] or 'нет'})" for u in unique_users])
-        history_str = "\n".join([f"{m['name']}: {m['text']}" for m in CHAT_HISTORY[-100:]])
+        users_info = ", ".join([u['name'] for u in unique_users])
+        history_str = "\n".join([f"{m['name']}: {m['text']}" for m in CHAT_HISTORY[-50:]])
 
         instructions = {
-            "general": "Ответь едко по контексту последнего сообщения.",
-            "shmon": "Поясни за этого персонажа по понятиям.",
-            "fas": "Устрой цели лютый разнос, предъяви за всё. Будь беспощаден.",
-            "obzor": "Сделай ядовитый обзор базара, упомяни 2-5 человек через теги.",
-            "roast": "Ворвись в диалог и раскидай всех.",
-            "timer": "Случайный наезд на кого-то из списка."
+            "general": "Ответь на это сообщение в своем ироничном пацанском стиле.",
+            "shmon": "Выдай этому персонажу шутливую характеристику 'по понятиям', основываясь на его словах.",
+            "fas": "Выдай очень едкий, саркастичный и смешной подкол в адрес этого участника. Это дружеский стеб.",
+            "obzor": "Сделай ироничный обзор последних обсуждений, подкалывая активных участников (2-5 человек).",
+            "roast": "Ворвись в беседу с едким замечанием по текущей теме.",
+            "timer": "Выдай случайный пацанский подкол для кого-то из чата."
         }
 
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"УЧАСТНИКИ:\n{users_info}\n\nБАЗАР:\n{history_str}"},
-                {"role": "system", "content": f"РЕЖИМ: {instructions.get(mode, 'general')}"},
+                {"role": "system", "content": f"УЧАСТНИКИ В ЧАТЕ: {users_info}\nБАЗАР ДЛЯ КОНТЕКСТА:\n{history_str}"},
+                {"role": "system", "content": f"ЗАДАЧА: {instructions.get(mode, 'general')}"},
                 {"role": "user", "content": prompt_text}
             ]
         )
@@ -74,53 +77,44 @@ async def get_ai_response(prompt_text, mode="general"):
         return response
     except Exception as e:
         logging.error(f"Ошибка Groq: {e}")
-        return "Че-то челюсть свело..."
+        return "Слышь, у меня че-то в мыслях перемкнуло..."
 
-# --- СНАЧАЛА КОМАНДЫ (ПРИОРИТЕТ) ---
+# --- ОБРАБОТКА КОМАНД ---
 
 @dp.message(Command("fas"))
 async def cmd_fas(message: Message):
     if message.chat.id != ALLOWED_CHAT_ID: return
+    if not CHAT_HISTORY:
+        await message.answer("В памяти пусто, не над кем шутить еще.")
+        return
     
     await bot.send_chat_action(message.chat.id, "typing")
-    
-    if not CHAT_HISTORY:
-        await message.answer("Слышь, а на кого гавкать? Чат пустой, я никого не запомнил ещё. Попиздите немного!")
-        return
-
-    # Берем случайного из тех, кто реально писал
     unique_users = list({m['id']: m for m in CHAT_HISTORY}.values())
     victim = random.choice(unique_users)
     mention = get_mention(victim)
     
-    res = await get_ai_response(f"ФАС на этого персонажа: {mention}", mode="fas")
+    res = await get_ai_response(f"Выдай жесткий подкол для {mention}", mode="fas")
     await message.answer(res, parse_mode="Markdown")
 
 @dp.message(Command("shmon"))
 async def cmd_shmon(message: Message):
     if message.chat.id != ALLOWED_CHAT_ID: return
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
-    res = await get_ai_response(f"Шмонай: {target.first_name}", mode="shmon")
+    res = await get_ai_response(f"Охарактеризуй этого типа: {target.first_name}", mode="shmon")
     await message.answer(res, parse_mode="Markdown")
 
 @dp.message(Command("obzor"))
 async def cmd_obzor(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID: return
-    if len(CHAT_HISTORY) < 3:
-        await message.answer("Мало базара. Накидайте сообщений сначала, фраера.")
-        return
+    if message.chat.id != ALLOWED_CHAT_ID or len(CHAT_HISTORY) < 3: return
     await bot.send_chat_action(message.chat.id, "typing")
-    res = await get_ai_response("Сделай обзор на 2-5 человек", mode="obzor")
+    res = await get_ai_response("Сделай обзор последних диалогов", mode="obzor")
     await message.answer(res, parse_mode="Markdown")
 
-# --- ПОТОМ ОБЫЧНЫЕ СООБЩЕНИЯ ---
-
+# --- ОБЫЧНЫЕ СООБЩЕНИЯ ---
 @dp.message(F.text)
 async def handle_message(message: Message):
     global MESSAGE_COUNTER, CHAT_HISTORY
     if message.chat.id != ALLOWED_CHAT_ID or message.from_user.is_bot: return
-
-    # Если это команда (начинается со слэша), пропускаем, её обработают выше
     if message.text.startswith('/'): return
 
     CHAT_HISTORY.append({
@@ -129,7 +123,7 @@ async def handle_message(message: Message):
         "username": message.from_user.username,
         "text": message.text
     })
-    if len(CHAT_HISTORY) > 200: CHAT_HISTORY.pop(0)
+    if len(CHAT_HISTORY) > 100: CHAT_HISTORY.pop(0)
 
     MESSAGE_COUNTER += 1
     bot_info = await bot.get_me()
@@ -140,16 +134,15 @@ async def handle_message(message: Message):
         await message.reply(res, parse_mode="Markdown")
     elif MESSAGE_COUNTER >= 30:
         MESSAGE_COUNTER = 0
-        res = await get_ai_response("Ворвись в базар", mode="roast")
+        res = await get_ai_response("Прокомментируй ситуацию в чате", mode="roast")
         await bot.send_message(ALLOWED_CHAT_ID, res, parse_mode="Markdown")
 
-# --- ТАЙМЕР ---
 async def random_roast_task():
     while True:
         await asyncio.sleep(7200)
         try:
             if CHAT_HISTORY:
-                res = await get_ai_response("Случайный наезд", mode="timer")
+                res = await get_ai_response("Выдай пацанский подгон для всех", mode="timer")
                 await bot.send_message(ALLOWED_CHAT_ID, res, parse_mode="Markdown")
         except Exception: pass
 
